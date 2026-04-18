@@ -10,11 +10,14 @@
 //   "100644 hello.txt\0" followed by 32 raw bytes of SHA-256
 
 #include "tree.h"
+#include "index.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
 // ─── Mode Constants ─────────────────────────────────────────────────────────
 
@@ -116,22 +119,54 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 
 // ─── TODO: Implement these ──────────────────────────────────────────────────
 
-// Build a tree hierarchy from the current index and write all tree
-// objects to the object store.
-//
-// HINTS - Useful functions and concepts for this phase:
-//   - index_load      : load the staged files into memory
-//   - strchr          : find the first '/' in a path to separate directories from files
-//   - strncmp         : compare prefixes to group files belonging to the same subdirectory
-//   - Recursion       : you will likely want to create a recursive helper function 
-//                       (e.g., `write_tree_level(entries, count, depth)`) to handle nested dirs.
-//   - tree_serialize  : convert your populated Tree struct into a binary buffer
-//   - object_write    : save that binary buffer to the store as OBJ_TREE
-//
-// Returns 0 on success, -1 on error.
 int tree_from_index(ObjectID *id_out) {
-    // TODO: Implement recursive tree building
-    // (See Lab Appendix for logical steps)
-    (void)id_out;
-    return -1;
+    Index index;
+
+    if (index_load(&index) != 0) {
+        fprintf(stderr, "error: failed to load index\n");
+        return -1;
+    }
+
+    if (index.count == 0) {
+        fprintf(stderr, "error: nothing to commit\n");
+        return -1;
+    }
+
+    Tree tree;
+    tree.count = 0;
+
+    for (int i = 0; i < index.count; i++) {
+
+        if (tree.count >= MAX_TREE_ENTRIES) {
+            fprintf(stderr, "error: too many entries\n");
+            return -1;
+        }
+
+        TreeEntry *te = &tree.entries[tree.count];
+
+        te->mode = index.entries[i].mode;
+        te->hash = index.entries[i].hash;
+
+        strncpy(te->name, index.entries[i].path, sizeof(te->name) - 1);
+        te->name[sizeof(te->name) - 1] = '\0';
+
+        tree.count++;
+    }
+
+    void *data = NULL;
+    size_t len = 0;
+
+    if (tree_serialize(&tree, &data, &len) != 0 || !data) {
+        fprintf(stderr, "error: tree serialize failed\n");
+        return -1;
+    }
+
+    if (object_write(OBJ_TREE, data, len, id_out) != 0) {
+        free(data);
+        fprintf(stderr, "error: tree write failed\n");
+        return -1;
+    }
+
+    free(data);
+    return 0;
 }
